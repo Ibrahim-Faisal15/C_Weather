@@ -16,3 +16,8 @@ compile_commands.json
 .cache/
 
 
+# Tooling
+compile_commands.json
+
+# macOS
+.DS_Store
