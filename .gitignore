@@ -18,6 +18,8 @@ compile_commands.json
 
 # Tooling
 compile_commands.json
+.vscode/
 
 # macOS
 .DS_Store
+.cache/
