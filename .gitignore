@@ -14,13 +14,3 @@ compile_commands.json
 # macOS
 .DS_Store
 .cache/
-<<<<<<< HEAD
-
-
-# Tooling
-compile_commands.json
-.vscode/
-
-# macOS
-.DS_Store
-.cache/
