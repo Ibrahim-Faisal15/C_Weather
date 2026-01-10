@@ -25,6 +25,7 @@ typedef struct weatherData
   int weatherID;
   char temperature[32];
   char humidity[32];
+  char country[100];
 
 } weatherData;
 
@@ -56,18 +57,26 @@ int main()
   const int winWidth = 600;
   const int winHeight = 250;
   const char *basePath = GetApplicationDirectory();
-  const char *fullPath_of_WeatherBanner;
-  const char *fullPath_of_WeatherLogo;
+  const char *fullPath_of_WeatherBanner = NULL;
+  const char *fullPath_of_WeatherLogo = NULL;
 
-  weatherData myData;
-  const char *API_KEY = "ENTER YOUR API KEY";
-  char url[256];
-  snprintf(url, sizeof(url), "http://api.openweathermap.org/data/2.5/weather?q=lahore&appid=%s", API_KEY);
+  weatherData myData = {0};
+  const char *API_KEY = getenv("OPENWEATHER_API_KEY");
+  if (!API_KEY || API_KEY[0] == '\0') {
+      printf("Missing API KEY. Set OPENWEATHER_API_KEY\n");
+      return 1;
+  }
+  char url[256] = {0};
+  snprintf(url, sizeof(url), "http://api.openweathermap.org/data/2.5/weather?q=Lahore&appid=%s", API_KEY);
 
-  struct Memory chunk;
+  struct Memory chunk ={0};
   chunk.data = malloc(1);
+  if (chunk.data==NULL){
+      fprintf(stderr, "malloc failed to allocate data for the chunk");
+      return 1;
+  }
   chunk.size = 0;
-  cJSON *json;
+  cJSON *json = NULL;
 
   CURL *curl;
   CURLcode result = curl_global_init(CURL_GLOBAL_ALL);
@@ -99,7 +108,27 @@ int main()
         cJSON *location = cJSON_GetObjectItemCaseSensitive(json, "name");
         if (cJSON_IsString(location))
         {
-          strcpy(myData.city, location->valuestring);
+            if(strlen(location->valuestring) >= sizeof(myData.city)){
+                fprintf(stderr, "Buffer overflow detected in location string. location length: %zu, buffer length: %zu\n", 
+                        strlen(location->valuestring), sizeof(myData.city));
+                return 1;
+            } 
+                strcpy(myData.city, location->valuestring);
+        }
+        cJSON *sys = cJSON_GetObjectItemCaseSensitive(json, "sys");
+        if(!cJSON_IsObject(sys)){
+            fprintf(stderr, "Failed to parse object \"sys\"");
+            return 1;
+        }
+        cJSON *country = cJSON_GetObjectItemCaseSensitive(sys, "country");
+        if (cJSON_IsString(country))
+        {
+            if(strlen(country->valuestring) >= sizeof(myData.country)){
+                fprintf(stderr, "Buffer overflow detected in country string. country length: %zu, buffer length: %zu\n", 
+                        strlen(country->valuestring), sizeof(myData.country));
+                return 1;
+            } 
+                strcpy(myData.country, country->valuestring);
         }
         // Get what weather it is
         cJSON *weather_obj = cJSON_GetObjectItemCaseSensitive(json, "weather");
@@ -107,7 +136,12 @@ int main()
         cJSON *weather_name = cJSON_GetObjectItemCaseSensitive(firstITEM, "main");
         if (cJSON_IsString(weather_name))
         {
-          strcpy(myData.weatherName, weather_name->valuestring);
+            if(strlen(weather_name->valuestring) >= sizeof(myData.weatherName)){
+                fprintf(stderr, "Buffer overflow detected in weather_name string. name length: %zu, buffer length: %zu\n", 
+                        strlen(weather_name->valuestring), sizeof(myData.weatherName));
+                return 1;
+            }
+                strcpy(myData.weatherName, weather_name->valuestring);
         }
         // Get the temperature
         cJSON *temperature_obj = cJSON_GetObjectItemCaseSensitive(json, "main");
@@ -190,8 +224,23 @@ int main()
   curl_global_cleanup();
 
   InitWindow(winWidth, winHeight, "Weather App");
+  if(fullPath_of_WeatherBanner ==NULL){
+      fprintf(stderr, "Failed to load path for weather banner");
+  }
   myData.weatherBanner = LoadTexture(fullPath_of_WeatherBanner);
+  if(myData.weatherBanner.id==0){
+      fprintf(stderr, "unable to load weather banner texture");
+      return 1;
+  }
+
+  if(fullPath_of_WeatherLogo==NULL){
+      fprintf(stderr, "Failed to load path for weather logo");
+  }
   myData.weatherlogo = LoadTexture(fullPath_of_WeatherLogo);
+  if(myData.weatherlogo.id==0){
+      fprintf(stderr, "unable to load weather logo texture");
+      return 1;
+  }
   const char *fontPath = TextFormat("%sassets/font/PressStart2P-Regular.ttf", basePath);
   const int fontSize = 35;
   Rectangle recSrc = {0.0f, 0.0f, (float)myData.weatherBanner.width, (float)myData.weatherlogo.height};
@@ -213,7 +262,7 @@ int main()
     BeginDrawing();
     // DrawText(TextFormat("%s", myData.weatherName), 100, 135, 50, WHITE);
     DrawTextEx(customFont, myData.weatherName, (Vector2){100, 135}, (float)fontSize, 0.0f, WHITE);
-    DrawText(TextFormat("%s", myData.city), 100, 170, 20, GRAY);
+    DrawText(TextFormat("%s, %s", myData.city, myData.country), 100, 170, 20, GRAY);
     // DrawText(TextFormat("%d", myData.temperature), 450, 135, 50, WHITE);
     DrawTextEx(customFont, myData.temperature, (Vector2){448, 135}, (float)fontSize, 0.0f, WHITE);
     DrawText(TextFormat("%s", myData.humidity), 460, 170, 20, GRAY);
@@ -228,6 +277,7 @@ int main()
 
     EndDrawing();
   }
+
   cJSON_Delete(json);
   free(chunk.data);
   curl_easy_cleanup(curl);
