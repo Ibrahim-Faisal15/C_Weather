@@ -10,6 +10,16 @@
 
 #define MAIN_GRAY ((Color){52, 52, 52, 255})
 
+// Application state enum for error handling
+typedef enum {
+  STATE_LOADING,
+  STATE_SUCCESS,
+  STATE_ERROR_API_KEY,
+  STATE_ERROR_NETWORK,
+  STATE_ERROR_INVALID_CITY,
+  STATE_ERROR_JSON_PARSE
+} AppState;
+
 struct Memory
 {
   char *data;
@@ -26,6 +36,7 @@ typedef struct weatherData
   char temperature[32];
   char humidity[32];
   char country[100];
+  char errorMessage[256];  // Store error messages for GUI display
 
 } weatherData;
 
@@ -51,7 +62,146 @@ size_t callback_func(void *ptr, size_t size, size_t num_of_members, void *userDa
   return total;
 }
 
-int main()
+// Button structure for UI
+typedef struct {
+  Rectangle bounds;
+  bool isHovered;
+} Button;
+
+// Function to fetch weather data for a given city
+AppState fetchWeatherData(const char *city, const char *API_KEY, weatherData *myData, 
+                          const char **fullPath_of_WeatherBanner, const char **fullPath_of_WeatherLogo,
+                          const char *basePath) {
+  AppState appState = STATE_LOADING;
+  char url[256] = {0};
+  snprintf(url, sizeof(url), "https://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s", city, API_KEY);
+
+  struct Memory chunk = {0};
+  chunk.data = malloc(1);
+  if (chunk.data == NULL) {
+    fprintf(stderr, "malloc failed to allocate data for the chunk");
+    snprintf(myData->errorMessage, sizeof(myData->errorMessage), 
+             "Memory Error\nFailed to allocate memory");
+    return STATE_ERROR_NETWORK;
+  }
+  chunk.size = 0;
+  cJSON *json = NULL;
+
+  CURL *curl;
+  CURLcode result = curl_global_init(CURL_GLOBAL_ALL);
+
+  if (result != CURLE_OK) {
+    appState = STATE_ERROR_NETWORK;
+    snprintf(myData->errorMessage, sizeof(myData->errorMessage), 
+             "Network Error\nFailed to initialize CURL");
+    free(chunk.data);
+    return appState;
+  }
+  
+  curl = curl_easy_init();
+  if (curl) {
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback_func);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
+    result = curl_easy_perform(curl);
+
+    if (result != CURLE_OK) {
+      appState = STATE_ERROR_NETWORK;
+      snprintf(myData->errorMessage, sizeof(myData->errorMessage), 
+               "Network Error\n%s", curl_easy_strerror(result));
+    } else {
+      json = cJSON_Parse(chunk.data);
+      if (json != NULL) {
+        // Check if API returned an error (e.g., city not found)
+        cJSON *cod = cJSON_GetObjectItemCaseSensitive(json, "cod");
+        if (cJSON_IsNumber(cod) && cod->valueint == 404) {
+          appState = STATE_ERROR_INVALID_CITY;
+          snprintf(myData->errorMessage, sizeof(myData->errorMessage), 
+                   "City Not Found\nPlease check the city name");
+        } else if (cJSON_IsString(cod) && strcmp(cod->valuestring, "404") == 0) {
+          appState = STATE_ERROR_INVALID_CITY;
+          snprintf(myData->errorMessage, sizeof(myData->errorMessage), 
+                   "City Not Found\nPlease check the city name");
+        } else {
+          // Parse all weather data
+          cJSON *location = cJSON_GetObjectItemCaseSensitive(json, "name");
+          if (cJSON_IsString(location) && strlen(location->valuestring) < sizeof(myData->city)) {
+            strcpy(myData->city, location->valuestring);
+          }
+          
+          cJSON *sys = cJSON_GetObjectItemCaseSensitive(json, "sys");
+          if (cJSON_IsObject(sys)) {
+            cJSON *country = cJSON_GetObjectItemCaseSensitive(sys, "country");
+            if (cJSON_IsString(country) && strlen(country->valuestring) < sizeof(myData->country)) {
+              strcpy(myData->country, country->valuestring);
+            }
+          }
+          
+          cJSON *weather_obj = cJSON_GetObjectItemCaseSensitive(json, "weather");
+          cJSON *firstITEM = cJSON_GetArrayItem(weather_obj, 0);
+          cJSON *weather_name = cJSON_GetObjectItemCaseSensitive(firstITEM, "main");
+          if (cJSON_IsString(weather_name) && strlen(weather_name->valuestring) < sizeof(myData->weatherName)) {
+            strcpy(myData->weatherName, weather_name->valuestring);
+          }
+          
+          cJSON *temperature_obj = cJSON_GetObjectItemCaseSensitive(json, "main");
+          cJSON *temperature = cJSON_GetObjectItemCaseSensitive(temperature_obj, "temp");
+          if (cJSON_IsNumber(temperature)) {
+            snprintf(myData->temperature, sizeof(myData->temperature), "%dC", (int)(temperature->valuedouble - 273.15));
+          }
+          
+          cJSON *humidity = cJSON_GetObjectItemCaseSensitive(temperature_obj, "humidity");
+          if (cJSON_IsNumber(humidity)) {
+            snprintf(myData->humidity, sizeof(myData->humidity), "%d%%", (int)(humidity->valuedouble));
+          }
+          
+          cJSON *weatherID = cJSON_GetObjectItemCaseSensitive(firstITEM, "id");
+          if (cJSON_IsNumber(weatherID)) {
+            myData->weatherID = weatherID->valuedouble;
+          }
+
+          // Determining weather banner and logo
+          if (myData->weatherID >= 200 && myData->weatherID <= 232) {
+            *fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/thunderStorm.jpg", basePath);
+            *fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/thunderStorm.png", basePath);
+          } else if (myData->weatherID >= 300 && myData->weatherID <= 321) {
+            *fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/rain.jpg", basePath);
+            *fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/rain.png", basePath);
+          } else if (myData->weatherID >= 500 && myData->weatherID <= 531) {
+            *fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/rain.jpg", basePath);
+            *fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/rain.png", basePath);
+          } else if (myData->weatherID >= 600 && myData->weatherID <= 622) {
+            *fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/snow.jpg", basePath);
+            *fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/snow.png", basePath);
+          } else if (myData->weatherID >= 701 && myData->weatherID <= 781) {
+            *fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/fog.jpg", basePath);
+            *fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/fog.png", basePath);
+          } else if (myData->weatherID == 800) {
+            *fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/clear.jpg", basePath);
+            *fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/sunny.png", basePath);
+          } else if (myData->weatherID > 800 && myData->weatherID <= 804) {
+            *fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/clouds.jpg", basePath);
+            *fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/clouds.png", basePath);
+          }
+          
+          appState = STATE_SUCCESS;
+        }
+        cJSON_Delete(json);
+      } else {
+        appState = STATE_ERROR_JSON_PARSE;
+        snprintf(myData->errorMessage, sizeof(myData->errorMessage), 
+                 "Parse Error\nFailed to parse API response");
+      }
+    }
+    curl_easy_cleanup(curl);
+  }
+  
+  free(chunk.data);
+  curl_global_cleanup();
+  return appState;
+}
+
+int main(int argc, char *argv[])
 {
   setlocale(LC_ALL, "");
   const int winWidth = 600;
@@ -60,187 +210,49 @@ int main()
   const char *fullPath_of_WeatherBanner = NULL;
   const char *fullPath_of_WeatherLogo = NULL;
 
+  // Get city from command-line argument or use default
+  const char *city = "Lahore";  // Default city
+  if (argc > 1) {
+    city = argv[1];
+  }
+
   weatherData myData = {0};
+  AppState appState = STATE_LOADING;
+  
   const char *API_KEY = getenv("OPENWEATHER_API_KEY");
   if (!API_KEY || API_KEY[0] == '\0') {
+      appState = STATE_ERROR_API_KEY;
+      snprintf(myData.errorMessage, sizeof(myData.errorMessage), 
+               "Missing API Key\nSet OPENWEATHER_API_KEY environment variable");
       printf("Missing API KEY. Set OPENWEATHER_API_KEY\n");
-      return 1;
+  } else {
+    // Fetch weather data on startup
+    appState = fetchWeatherData(city, API_KEY, &myData, &fullPath_of_WeatherBanner, &fullPath_of_WeatherLogo, basePath);
   }
-  char url[256] = {0};
-  snprintf(url, sizeof(url), "http://api.openweathermap.org/data/2.5/weather?q=Lahore&appid=%s", API_KEY);
 
-  struct Memory chunk ={0};
-  chunk.data = malloc(1);
-  if (chunk.data==NULL){
-      fprintf(stderr, "malloc failed to allocate data for the chunk");
-      return 1;
-  }
-  chunk.size = 0;
-  cJSON *json = NULL;
-
-  CURL *curl;
-  CURLcode result = curl_global_init(CURL_GLOBAL_ALL);
-
-  if (result != CURLE_OK)
-  {
-    printf("Initialization of CURL failed.");
-    return 1;
-  }
-  curl = curl_easy_init();
-  if (curl)
-  {
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback_func);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
-    result = curl_easy_perform(curl);
-
-    if (result != CURLE_OK)
-    {
-      printf("Error: %s\n", curl_easy_strerror(result));
+  InitWindow(winWidth, winHeight, "Weather App");
+  
+  // Only load textures if we have successful data
+  if (appState == STATE_SUCCESS) {
+    if(fullPath_of_WeatherBanner ==NULL){
+        fprintf(stderr, "Failed to load path for weather banner");
+    } else {
+      myData.weatherBanner = LoadTexture(fullPath_of_WeatherBanner);
+      if(myData.weatherBanner.id==0){
+          fprintf(stderr, "unable to load weather banner texture");
+      }
     }
-    else
-    {
-      // printf("Data: %s", chunk.data);
-      json = cJSON_Parse(chunk.data);
-      if (json != NULL)
-      {
-        // Get the city name
-        cJSON *location = cJSON_GetObjectItemCaseSensitive(json, "name");
-        if (cJSON_IsString(location))
-        {
-            if(strlen(location->valuestring) >= sizeof(myData.city)){
-                fprintf(stderr, "Buffer overflow detected in location string. location length: %zu, buffer length: %zu\n", 
-                        strlen(location->valuestring), sizeof(myData.city));
-                return 1;
-            } 
-                strcpy(myData.city, location->valuestring);
-        }
-        cJSON *sys = cJSON_GetObjectItemCaseSensitive(json, "sys");
-        if(!cJSON_IsObject(sys)){
-            fprintf(stderr, "Failed to parse object \"sys\"");
-            return 1;
-        }
-        cJSON *country = cJSON_GetObjectItemCaseSensitive(sys, "country");
-        if (cJSON_IsString(country))
-        {
-            if(strlen(country->valuestring) >= sizeof(myData.country)){
-                fprintf(stderr, "Buffer overflow detected in country string. country length: %zu, buffer length: %zu\n", 
-                        strlen(country->valuestring), sizeof(myData.country));
-                return 1;
-            } 
-                strcpy(myData.country, country->valuestring);
-        }
-        // Get what weather it is
-        cJSON *weather_obj = cJSON_GetObjectItemCaseSensitive(json, "weather");
-        cJSON *firstITEM = cJSON_GetArrayItem(weather_obj, 0);
-        cJSON *weather_name = cJSON_GetObjectItemCaseSensitive(firstITEM, "main");
-        if (cJSON_IsString(weather_name))
-        {
-            if(strlen(weather_name->valuestring) >= sizeof(myData.weatherName)){
-                fprintf(stderr, "Buffer overflow detected in weather_name string. name length: %zu, buffer length: %zu\n", 
-                        strlen(weather_name->valuestring), sizeof(myData.weatherName));
-                return 1;
-            }
-                strcpy(myData.weatherName, weather_name->valuestring);
-        }
-        // Get the temperature
-        cJSON *temperature_obj = cJSON_GetObjectItemCaseSensitive(json, "main");
-        cJSON *temperature = cJSON_GetObjectItemCaseSensitive(temperature_obj, "temp");
-        if (cJSON_IsNumber(temperature))
-        {
 
-          snprintf(myData.temperature, sizeof(myData.temperature), "%dC", (int)(temperature->valuedouble - 273.15));
-        }
-        // Get the humidity level
-        cJSON *humidity = cJSON_GetObjectItemCaseSensitive(temperature_obj, "humidity");
-        if (cJSON_IsNumber(humidity))
-        {
-
-          snprintf(myData.humidity, sizeof(myData.humidity), "%d%%", (int)(humidity->valuedouble));
-        }
-        // Get the weather ID
-        cJSON *weatherID_obj = cJSON_GetObjectItemCaseSensitive(json, "weather");
-        cJSON *weatherID = cJSON_GetObjectItemCaseSensitive(firstITEM, "id");
-        if (cJSON_IsNumber(weatherID))
-        {
-          myData.weatherID = weatherID->valuedouble;
-        }
-
-        // Determining weather banner and logo
-        if (myData.weatherID >= 200 && myData.weatherID <= 232)
-        {
-          printf("ThunderStorm");
-          fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/thunderStorm.jpg", basePath);
-          fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/thunderStorm.png", basePath);
-        }
-        else if (myData.weatherID >= 300 && myData.weatherID <= 321)
-        {
-          printf("Drizzle");
-
-          fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/rain.jpg", basePath);
-          fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/rain.png", basePath);
-        }
-        else if (myData.weatherID >= 500 && myData.weatherID <= 531)
-        {
-          printf("Rain");
-          fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/rain.jpg", basePath);
-          fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/rain.png", basePath);
-        }
-        else if (myData.weatherID >= 600 && myData.weatherID <= 622)
-        {
-          printf("Snow");
-          fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/snow.jpg", basePath);
-          fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/snow.png", basePath);
-        }
-        else if (myData.weatherID >= 701 && myData.weatherID <= 781)
-        {
-          printf("Atmosphere");
-
-          fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/fog.jpg", basePath);
-          fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/fog.png", basePath);
-        }
-        else if (myData.weatherID == 800)
-        {
-          printf("clear");
-
-          fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/clear.jpg", basePath);
-          fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/sunny.png", basePath);
-        }
-        else if (myData.weatherID > 800 && myData.weatherID <= 804)
-        {
-          printf("clouds");
-
-          fullPath_of_WeatherBanner = TextFormat("%sassets/weatherBanner/clouds.jpg", basePath);
-          fullPath_of_WeatherLogo = TextFormat("%sassets/weatherLogos/clouds.png", basePath);
-        }
-
-        // printf("City: %s\nWeather: %s\nTemperature: %d\nHumidity: %d\nLogo: %s\nBanner: %s\n",
-        //        myData.city, myData.weatherName, myData.temperature, myData.humidity,
-        //        myData.weatherlogo, myData.weatherBanner);
+    if(fullPath_of_WeatherLogo==NULL){
+        fprintf(stderr, "Failed to load path for weather logo");
+    } else {
+      myData.weatherlogo = LoadTexture(fullPath_of_WeatherLogo);
+      if(myData.weatherlogo.id==0){
+          fprintf(stderr, "unable to load weather logo texture");
       }
     }
   }
-
-  curl_global_cleanup();
-
-  InitWindow(winWidth, winHeight, "Weather App");
-  if(fullPath_of_WeatherBanner ==NULL){
-      fprintf(stderr, "Failed to load path for weather banner");
-  }
-  myData.weatherBanner = LoadTexture(fullPath_of_WeatherBanner);
-  if(myData.weatherBanner.id==0){
-      fprintf(stderr, "unable to load weather banner texture");
-      return 1;
-  }
-
-  if(fullPath_of_WeatherLogo==NULL){
-      fprintf(stderr, "Failed to load path for weather logo");
-  }
-  myData.weatherlogo = LoadTexture(fullPath_of_WeatherLogo);
-  if(myData.weatherlogo.id==0){
-      fprintf(stderr, "unable to load weather logo texture");
-      return 1;
-  }
+  
   const char *fontPath = TextFormat("%sassets/font/PressStart2P-Regular.ttf", basePath);
   const int fontSize = 35;
   Rectangle recSrc = {0.0f, 0.0f, (float)myData.weatherBanner.width, (float)myData.weatherlogo.height};
@@ -248,42 +260,124 @@ int main()
   // printf("%d qlrj2olthi23thoyn2y",myData.weatherBanner.width);
   Font customFont = LoadFontEx(fontPath, fontSize, NULL, 0);
 
+  // Create refresh button
+  Button refreshButton = {0};
+  refreshButton.bounds = (Rectangle){winWidth - 110, winHeight - 40, 100, 30};
+  refreshButton.isHovered = false;
+
   // RenderTexture2D miniWIN = LoadRenderTexture(600, 120);
 
   SetTargetFPS(60);
 
   while (!WindowShouldClose())
   {
+    // Update button hover state
+    Vector2 mousePos = GetMousePosition();
+    refreshButton.isHovered = CheckCollisionPointRec(mousePos, refreshButton.bounds);
+    
+    // Handle refresh button click
+    if (refreshButton.isHovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && API_KEY) {
+      // Unload old textures if they exist
+      if (appState == STATE_SUCCESS) {
+        if (myData.weatherBanner.id != 0) UnloadTexture(myData.weatherBanner);
+        if (myData.weatherlogo.id != 0) UnloadTexture(myData.weatherlogo);
+      }
+      
+      // Reset data and fetch new weather
+      memset(&myData, 0, sizeof(weatherData));
+      appState = fetchWeatherData(city, API_KEY, &myData, &fullPath_of_WeatherBanner, &fullPath_of_WeatherLogo, basePath);
+      
+      // Load new textures if successful
+      if (appState == STATE_SUCCESS) {
+        if (fullPath_of_WeatherBanner) {
+          myData.weatherBanner = LoadTexture(fullPath_of_WeatherBanner);
+        }
+        if (fullPath_of_WeatherLogo) {
+          myData.weatherlogo = LoadTexture(fullPath_of_WeatherLogo);
+        }
+        // Update rectangle source dimensions
+        recSrc = (Rectangle){0.0f, 0.0f, (float)myData.weatherBanner.width, (float)myData.weatherlogo.height};
+      }
+    }
 
     // BeginTextureMode(miniWIN);
     // ClearBackground(BLACK);
     // EndTextureMode();
 
     BeginDrawing();
-    // DrawText(TextFormat("%s", myData.weatherName), 100, 135, 50, WHITE);
-    DrawTextEx(customFont, myData.weatherName, (Vector2){100, 135}, (float)fontSize, 0.0f, WHITE);
-    DrawText(TextFormat("%s, %s", myData.city, myData.country), 100, 170, 20, GRAY);
-    // DrawText(TextFormat("%d", myData.temperature), 450, 135, 50, WHITE);
-    DrawTextEx(customFont, myData.temperature, (Vector2){448, 135}, (float)fontSize, 0.0f, WHITE);
-    DrawText(TextFormat("%s", myData.humidity), 460, 170, 20, GRAY);
-    DrawLine(430, 130, 430, 190, GRAY);
-    // DrawText(TextFormat("%s", myData.city), 100, 170, 20, GRAY);
-
-    DrawTexturePro(myData.weatherBanner, recSrc, recDest, (Vector2){0, 0}, 0.20f, WHITE);
-    DrawTextureEx(myData.weatherlogo, (Vector2){-30, 130}, 0.0f, 0.25f, WHITE);
-
     ClearBackground(MAIN_GRAY);
+    
+    // Display content based on application state
+    if (appState == STATE_SUCCESS) {
+      // Draw normal weather display
+      DrawTextEx(customFont, myData.weatherName, (Vector2){100, 135}, (float)fontSize, 0.0f, WHITE);
+      DrawText(TextFormat("%s, %s", myData.city, myData.country), 100, 170, 20, GRAY);
+      DrawTextEx(customFont, myData.temperature, (Vector2){448, 135}, (float)fontSize, 0.0f, WHITE);
+      DrawText(TextFormat("%s", myData.humidity), 460, 170, 20, GRAY);
+      DrawLine(430, 130, 430, 190, GRAY);
+
+      DrawTexturePro(myData.weatherBanner, recSrc, recDest, (Vector2){0, 0}, 0.20f, WHITE);
+      DrawTextureEx(myData.weatherlogo, (Vector2){-30, 130}, 0.0f, 0.25f, WHITE);
+    } else {
+      // Display error message
+      const char *errorTitle = "Error";
+      Color errorColor = RED;
+      
+      switch(appState) {
+        case STATE_LOADING:
+          errorTitle = "Loading...";
+          errorColor = YELLOW;
+          break;
+        case STATE_ERROR_API_KEY:
+          errorTitle = "API Key Error";
+          break;
+        case STATE_ERROR_NETWORK:
+          errorTitle = "Network Error";
+          break;
+        case STATE_ERROR_INVALID_CITY:
+          errorTitle = "Invalid City";
+          break;
+        case STATE_ERROR_JSON_PARSE:
+          errorTitle = "Data Error";
+          break;
+        default:
+          errorTitle = "Unknown Error";
+      }
+      
+      // Draw error title
+      int titleWidth = MeasureText(errorTitle, 30);
+      DrawText(errorTitle, (winWidth - titleWidth) / 2, 60, 30, errorColor);
+      
+      // Draw error message (multi-line support)
+      DrawText(myData.errorMessage, 50, 110, 20, WHITE);
+      
+      // Draw usage hint
+      DrawText("Usage: ./weather_app [city_name]", 50, 200, 16, GRAY);
+    }
+    
+    // Draw refresh button (always visible)
+    Color buttonColor = refreshButton.isHovered ? DARKGREEN : GREEN;
+    if (!API_KEY) buttonColor = GRAY;  // Disabled if no API key
+    
+    DrawRectangleRec(refreshButton.bounds, buttonColor);
+    DrawRectangleLinesEx(refreshButton.bounds, 2, refreshButton.isHovered ? WHITE : LIGHTGRAY);
+    
+    const char *buttonText = "Refresh";
+    int textWidth = MeasureText(buttonText, 16);
+    DrawText(buttonText, 
+             refreshButton.bounds.x + (refreshButton.bounds.width - textWidth) / 2,
+             refreshButton.bounds.y + 7, 
+             16, WHITE);
+
     // DrawTextureRec(miniWIN.texture, (Rectangle){0, 0, miniWIN.texture.width, miniWIN.texture.height}, (Vector2){0, 0}, WHITE);
 
     EndDrawing();
   }
 
-  cJSON_Delete(json);
-  free(chunk.data);
-  curl_easy_cleanup(curl);
+  // Cleanup
   UnloadFont(customFont);
-  UnloadTexture(myData.weatherBanner);
-  UnloadTexture(myData.weatherlogo);
+  if (myData.weatherBanner.id != 0) UnloadTexture(myData.weatherBanner);
+  if (myData.weatherlogo.id != 0) UnloadTexture(myData.weatherlogo);
   // UnloadRenderTexture(miniWIN);
   CloseWindow();
 

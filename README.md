@@ -23,9 +23,14 @@ An **educational open‑source project** built to learn and get hands‑on expos
 
 ## ✨ Current Features
 
-* Fetches weather data for a city using an API
+* **Secure HTTPS API calls** to OpenWeatherMap
+* **City selection** via command-line argument
+* **GUI error messages** for better user feedback
+* **Refresh button** to update weather without restarting
 * Displays weather information in a raylib window
-* Basic rendering of text and values
+* Shows temperature (Celsius), humidity, weather condition
+* Dynamic weather banners and icons based on conditions
+* Retro pixel-art font for aesthetic appeal
 
 ---
 
@@ -41,17 +46,40 @@ An **educational open‑source project** built to learn and get hands‑on expos
 * GCC or Clang
 * libcurl installed
 * raylib installed
+* OpenWeatherMap API key ([Get one free here](https://openweathermap.org/api))
 
-### Build & Run (Linux example)
+### Build & Run
 
 ```bash
+# Set your API key (required)
+export OPENWEATHER_API_KEY="your_api_key_here"
 
-gcc test.c -o weather_app \
-  -lraylib -lcurl -lcjson \
-  -lGL -lm -lpthread -ldl -lrt -lX11
+# Build the application
+./build.sh
 
+# Run with default city (Lahore)
 ./weather_app
+
+# Run with a specific city
+./weather_app "London"
+./weather_app "New York"
+./weather_app "Tokyo"
 ```
+
+### Using the Refresh Button
+
+Once the app is running:
+- Click the green **Refresh** button in the bottom-right corner
+- Weather data updates automatically
+- No need to restart the application
+
+### Error Handling
+
+The app now displays helpful error messages in the GUI:
+- **Missing API Key**: Instructions to set environment variable
+- **Invalid City**: Notification when city is not found
+- **Network Errors**: Clear error messages for connection issues
+- **Usage Hints**: Command-line usage displayed on errors
 ---
 
 ## 🤝 Contributing
