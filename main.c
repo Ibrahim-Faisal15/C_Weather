@@ -1,12 +1,12 @@
 
-#include "raylib.h"
-#include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <cjson/cJSON.h>
-#include <wchar.h>
 #include <locale.h>
+#include <wchar.h>
+#include <curl/curl.h>
+#include <cjson/cJSON.h>
+#include "raylib.h"
 
 #define MAIN_GRAY ((Color){52, 52, 52, 255})
 

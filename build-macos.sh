@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-cc test.c -o test \
+cc main.c -o main \
   -I"$(brew --prefix raylib)/include" \
   -I"$(brew --prefix cjson)/include" \
   -L"$(brew --prefix raylib)/lib" \
